@@ -1,0 +1,6 @@
+{
+    "scripts": {
+        "train": "python train.py -c configs/deim_dfine/deim_hgnetv2_m_coco.yml --use-amp --seed 1337 -t pretrained/deim_dfine_hgnetv2_m_coco_90e.pth",
+        "export": "python tools/deployment/export_onnx.py -c configs/deim_dfine/deim_hgnetv2_m_coco.yml -r outputs/deim_hgnetv2_m_coco/best_stg1.pth"
+    }
+}
