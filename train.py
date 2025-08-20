@@ -28,7 +28,7 @@ if debug:
 def main(args, ) -> None:
     """main
     """
-    dist_utils.setup_distributed(args.print_rank, args.print_method, seed=args.seed)
+    #dist_utils.setup_distributed(args.print_rank, args.print_method, seed=args.seed)
 
     assert not all([args.tuning, args.resume]), \
         'Only support from_scrach or resume or tuning at one time'

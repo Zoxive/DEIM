@@ -29,6 +29,7 @@ no_aug_epoch: 12
 
 ## Our DataAug
 train_dataloader: 
+  total_batch_size: 16
   dataset: 
     transforms:
       policy:
@@ -37,3 +38,6 @@ train_dataloader:
   collate_fn:
     mixup_epochs: [4, 49]
     stop_epoch: 90
+
+val_dataloader:
+  total_batch_size: 16
