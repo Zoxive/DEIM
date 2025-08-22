@@ -18,6 +18,7 @@ from ._solver import BaseSolver
 from .det_engine import train_one_epoch, evaluate
 from ..optim.lr_scheduler import FlatCosineLRScheduler
 
+import wandb
 
 class DetSolver(BaseSolver):
 
@@ -25,9 +26,15 @@ class DetSolver(BaseSolver):
         self.train()
         args = self.cfg
 
-        n_parameters, model_stats = stats(self.cfg)
-        print(model_stats)
+        flops, macs, params = stats(self.cfg)
+        print(f"Model FLOPs: {flops}   MACs: {macs}   Params: {params}")
         print("-"*42 + "Start training" + "-"*43)
+
+        wandb_run = wandb.init(config=self.cfg)
+
+        wandb_run.log({"Model FLOPs": flops, "Model MACs": macs, "Model Params": params})
+
+        wandb_run.watch(self.model)
 
         self.self_lr_scheduler = False
         if args.lrsheduler is not None:
@@ -139,6 +146,8 @@ class DetSolver(BaseSolver):
                 best_stat_print[k] = max(best_stat[k], top1)
                 print(f'best_stat: {best_stat_print}')  # global best
 
+                wandb_run.log(best_stat)
+
                 if best_stat['epoch'] == epoch and self.output_dir:
                     if epoch >= self.train_dataloader.collate_fn.stop_epoch:
                         if test_stats[k][0] > top1:
@@ -162,6 +171,8 @@ class DetSolver(BaseSolver):
                 'n_parameters': n_parameters
             }
 
+            wandb_run.log(log_stats)
+
             if self.output_dir and dist_utils.is_main_process():
                 with (self.output_dir / "log.txt").open("a") as f:
                     f.write(json.dumps(log_stats) + "\n")
@@ -180,6 +191,7 @@ class DetSolver(BaseSolver):
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         print('Training time {}'.format(total_time_str))
+        wandb_run.finish()
 
 
     def val(self, ):

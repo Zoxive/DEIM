@@ -1,7 +1,7 @@
 {
     "scripts": {
-        "train": "python train.py -c configs/deim_dfine/deim_hgnetv2_m_coco.yml --use-amp --seed 1337 -t pretrained/deim_dfine_hgnetv2_m_coco_90e.pth",
-        "export": "python tools/deployment/export_onnx.py -c configs/deim_dfine/deim_hgnetv2_m_coco.yml -r outputs/deim_hgnetv2_m_coco/best_stg1.pth",
-        "inf_test": "python tools/inference/onnx_inf.py --onnx outputs/deim_hgnetv2_m_coco/best_stg1.onnx --input ../catchlog_data/images/436511de-5356-4cc6-ab80-be053abe1ab2.jpg"
+        "train": "python train.py -c configs/deim_dfine/deim_hgnetv2_s_coco.yml --use-amp --seed 1337 -t pretrained/deim_dfine_hgnetv2_s_coco_120e.pth",
+        "export": "python tools/deployment/export_onnx.py -c configs/deim_dfine/deim_hgnetv2_s_coco.yml -r outputs/deim_hgnetv2_s_coco/best_stg1.pth",
+        "inf_test": "python tools/inference/onnx_inf.py --onnx outputs/deim_hgnetv2_s_coco/best_stg1.onnx --input ../catchlog_data/images/436511de-5356-4cc6-ab80-be053abe1ab2.jpg"
     }
 }

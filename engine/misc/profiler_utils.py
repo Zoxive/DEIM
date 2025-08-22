@@ -8,7 +8,7 @@ from typing import Tuple
 
 def stats(
     cfg,
-    input_shape: Tuple=(1, 3, 640, 640), ) -> Tuple[int, dict]:
+    input_shape: Tuple=(1, 3, 640, 640), ) -> Tuple[str, str, int]:
 
     base_size = cfg.train_dataloader.collate_fn.base_size
     input_shape = (1, 3, base_size, base_size)
@@ -23,4 +23,4 @@ def stats(
     params = sum(p.numel() for p in model_for_info.parameters())
     del model_for_info
 
-    return params, {"Model FLOPs:%s   MACs:%s   Params:%s" %(flops, macs, params)}
+    return flops, macs, params
