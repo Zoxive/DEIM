@@ -50,6 +50,7 @@ def main(args, ):
             return outputs
 
     model = Model()
+    model.eval()
 
     data = torch.rand(32, 3, 640, 640)
     size = torch.tensor([[640, 640]])

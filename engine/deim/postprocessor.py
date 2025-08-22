@@ -61,6 +61,7 @@ class PostProcessor(nn.Module):
             # labels = index % self.num_classes
             labels = mod(index, self.num_classes)
             index = index // self.num_classes
+            index = index.long()
             boxes = bbox_pred.gather(dim=1, index=index.unsqueeze(-1).repeat(1, 1, bbox_pred.shape[-1]))
 
         else:
