@@ -51,7 +51,7 @@ class DetSolver(BaseSolver):
         # evaluate again before resume training
         if self.last_epoch > 0:
             module = self.ema.module if self.ema else self.model
-            test_stats, coco_evaluator = evaluate(
+            test_stats, coco_evaluator, extended_stats = evaluate(
                 module,
                 self.criterion,
                 self.postprocessor,
@@ -112,7 +112,7 @@ class DetSolver(BaseSolver):
                     dist_utils.save_on_master(self.state_dict(), checkpoint_path)
 
             module = self.ema.module if self.ema else self.model
-            test_stats, coco_evaluator = evaluate(
+            test_stats, coco_evaluator, extended_stats = evaluate(
                 module,
                 self.criterion,
                 self.postprocessor,
@@ -120,6 +120,12 @@ class DetSolver(BaseSolver):
                 self.evaluator,
                 self.device
             )
+
+            if extended_stats is not None:
+                bbox_stats = extended_stats["bbox"]
+                flattened_stats = flatten_metrics(bbox_stats)
+                print(flattened_stats)
+                wandb_run.log(flattened_stats)
 
             # TODO
             for k in test_stats:
@@ -146,8 +152,6 @@ class DetSolver(BaseSolver):
                 best_stat_print[k] = max(best_stat[k], top1)
                 print(f'best_stat: {best_stat_print}')  # global best
 
-                wandb_run.log(best_stat)
-
                 if best_stat['epoch'] == epoch and self.output_dir:
                     if epoch >= self.train_dataloader.collate_fn.stop_epoch:
                         if test_stats[k][0] > top1:
@@ -162,7 +166,6 @@ class DetSolver(BaseSolver):
                     self.ema.decay -= 0.0001
                     self.load_resume_state(str(self.output_dir / 'best_stg1.pth'))
                     print(f'Refresh EMA at epoch {epoch} with decay {self.ema.decay}')
-
 
             log_stats = {
                 **{f'train_{k}': v for k, v in train_stats.items()},
@@ -198,10 +201,26 @@ class DetSolver(BaseSolver):
         self.eval()
 
         module = self.ema.module if self.ema else self.model
-        test_stats, coco_evaluator = evaluate(module, self.criterion, self.postprocessor,
+        test_stats, coco_evaluator, extended_stats = evaluate(module, self.criterion, self.postprocessor,
                 self.val_dataloader, self.evaluator, self.device)
 
         if self.output_dir:
             dist_utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, self.output_dir / "eval.pth")
 
         return
+
+def flatten_metrics(metrics_dict):
+    log_dict = {}
+    
+    # Per-class metrics
+    for entry in metrics_dict["class_map"]:
+        cls = entry.pop("class")
+        for k, v in entry.items():
+            log_dict[f"{cls}/{k}"] = v
+    
+    # Overall metrics
+    for k, v in metrics_dict.items():
+        if k != "class_map":
+            log_dict[f"overall/{k}"] = v
+    
+    return log_dict

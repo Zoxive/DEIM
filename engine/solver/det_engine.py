@@ -161,10 +161,12 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
     if coco_evaluator is not None:
         coco_evaluator.synchronize_between_processes()
 
+    extended_stats = None
+
     # accumulate predictions from all images
     if coco_evaluator is not None:
         coco_evaluator.accumulate()
-        coco_evaluator.summarize()
+        extended_stats = coco_evaluator.summarize()
 
     stats = {}
     # stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
@@ -174,4 +176,4 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
         if 'segm' in iou_types:
             stats['coco_eval_masks'] = coco_evaluator.coco_eval['segm'].stats.tolist()
 
-    return stats, coco_evaluator
+    return stats, coco_evaluator, extended_stats

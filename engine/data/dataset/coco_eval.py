@@ -73,9 +73,15 @@ class CocoEvaluator(object):
             coco_eval.accumulate()
 
     def summarize(self):
+        extended_stats: dict[str, Any] = {}
+
         for iou_type, coco_eval in self.coco_eval.items():
             print("IoU metric: {}".format(iou_type))
             coco_eval.summarize()
+
+            extended_stats[iou_type] = coco_eval.extended_metrics
+
+        return extended_stats
 
     def prepare(self, predictions, iou_type):
         if iou_type == "bbox":
