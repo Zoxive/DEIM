@@ -11,8 +11,8 @@ train_dataloader:
   type: DataLoader
   dataset:
     type: CocoDetection
-    img_folder: /home/kyle/github/catchlog_data/detection_2025/coco/train 
-    ann_file: /home/kyle/github/catchlog_data/detection_2025/coco/train/_annotations.coco.json
+    img_folder: ../coco/train 
+    ann_file: ../coco/train/_annotations.coco.json
     return_masks: False
     transforms:
       type: Compose
@@ -28,8 +28,8 @@ val_dataloader:
   type: DataLoader
   dataset:
     type: CocoDetection
-    img_folder: /home/kyle/github/catchlog_data/detection_2025/coco/valid
-    ann_file: /home/kyle/github/catchlog_data/detection_2025/coco/valid/_annotations.coco.json
+    img_folder: ../coco/valid
+    ann_file: ../coco/valid/_annotations.coco.json
     return_masks: False
     transforms:
       type: Compose
