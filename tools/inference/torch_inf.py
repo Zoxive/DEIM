@@ -30,12 +30,15 @@ def draw(images, labels, boxes, scores, thrh=0.4):
             draw.rectangle(list(b), outline='red')
             draw.text((b[0], b[1]), text=f"{lab[j].item()} {round(scrs[j].item(), 2)}", fill='blue', )
 
+            print(f'lbl: {lab[j].item()}, bb: {b}, scr: {scrs[j].item()}')
+
         im.save('torch_results.jpg')
 
 
 def process_image(model, device, file_path):
     im_pil = Image.open(file_path).convert('RGB')
     w, h = im_pil.size
+    print('Image original size: ', w, h)
     orig_size = torch.tensor([[w, h]]).to(device)
 
     transforms = T.Compose([
