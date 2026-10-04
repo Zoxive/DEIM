@@ -1,0 +1,13 @@
+# Bakeoff arm: RTMDet-s, ReLU in place of SiLU (engine/rtmdet).
+__include__: [
+  './bakeoff_rtmdet-s.yml',
+]
+
+output_dir: ./outputs/bakeoff_rtmdet-s-relu
+
+epoches: 16
+
+RTMDet:
+  arch: s
+  act: relu
+  strides: [8, 16, 32]

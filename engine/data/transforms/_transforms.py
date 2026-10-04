@@ -147,3 +147,46 @@ class ConvertPILImage(T.Transform):
     # override transform method for torchvision >= 0.21
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
         return self._transform(inpt, params)
+
+
+@register()
+class RandomRotate90(T.Transform):
+    """Turn the whole sample a quarter turn, boxes included, with probability `p`.
+
+    For a training set whose objects are almost all photographed one way up (long side
+    horizontal), so a detector trained on it misses the same objects photographed upright.
+    A quarter turn is exact on axis-aligned boxes, so this is the cheap way to teach the
+    other orientation. `angles` is drawn
+    uniformly when the turn fires; 180 is left out by default because it does not change a
+    box's aspect. Applied before Resize; runs every epoch like RandomHorizontalFlip (it is not
+    in the stop_epoch policy).
+    """
+    _transformed_types = (
+        PIL.Image.Image,
+        Image,
+        Video,
+        Mask,
+        BoundingBoxes,
+    )
+
+    def __init__(self, p: float = 0.3, angles=(90, 270)) -> None:
+        super().__init__()
+        self.p = p
+        self.angles = list(angles)
+
+    def _get_params(self, flat_inputs: List[Any]) -> Dict[str, Any]:
+        if torch.rand(1).item() >= self.p:
+            return {'angle': 0}
+        return {'angle': self.angles[int(torch.randint(len(self.angles), (1,)).item())]}
+
+    # torchvision >= 0.21 calls make_params / transform; older calls _get_params / _transform
+    def make_params(self, flat_inputs: List[Any]) -> Dict[str, Any]:
+        return self._get_params(flat_inputs)
+
+    def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        if params['angle'] == 0:
+            return inpt
+        return F.rotate(inpt, params['angle'], expand=True)
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        return self._transform(inpt, params)

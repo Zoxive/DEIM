@@ -39,6 +39,7 @@ class DEIMCriterion(nn.Module):
         share_matched_indices=False,
         mal_alpha=None,
         use_uni_set=True,
+        distill_adaptive_params=None,
         ):
         """Create the criterion.
         Parameters:
@@ -53,7 +54,14 @@ class DEIMCriterion(nn.Module):
         self.num_classes = num_classes
         self.matcher = matcher
         self.weight_dict = weight_dict
-        self.losses = losses
+        # 'distill' (RT-DETRv4 feature distillation, engine/deim/dinov3_teacher.py) is one loss on the
+        # encoder, not a per-decoder-layer loss, so it is kept out of the loops below that repeat every
+        # loss on the aux, pre, enc and dn outputs.
+        self.distill = 'distill' in losses
+        self.losses = [loss for loss in losses if loss != 'distill']
+        # {enabled, rho, delta, default_weight}: det_solver.py retunes weight_dict['loss_distill'] after
+        # each epoch so the encoder transformer's share of the gradient stays in rho +- delta percent.
+        self.distill_adaptive_params = distill_adaptive_params
         self.boxes_weight_format = boxes_weight_format
         self.share_matched_indices = share_matched_indices
         self.alpha = alpha
@@ -64,6 +72,21 @@ class DEIMCriterion(nn.Module):
         self.num_pos, self.num_neg = None, None
         self.mal_alpha = mal_alpha
         self.use_uni_set = use_uni_set
+
+    def loss_distillation(self, outputs):
+        student = outputs.get('student_distill_output')
+        teacher = outputs.get('teacher_encoder_output')
+        if student is None or teacher is None:
+            raise ValueError("'distill' is in losses but the outputs carry no student/teacher feature maps: "
+                             "set HybridEncoder.distill_teacher_dim and a teacher_model in the config")
+        if student.shape[1] != teacher.shape[1]:
+            raise ValueError(f'distillation width mismatch: student {student.shape[1]}, teacher {teacher.shape[1]}')
+        if student.shape[2:] != teacher.shape[2:]:
+            teacher = F.interpolate(teacher.float(), size=student.shape[2:], mode='bilinear', align_corners=False)
+        # fp32 whatever the autocast dtype of the forward: this pool has twice died of fp16 overflow.
+        student = F.normalize(student.float().flatten(2).permute(0, 2, 1), p=2, dim=-1)
+        teacher = F.normalize(teacher.float().flatten(2).permute(0, 2, 1), p=2, dim=-1)
+        return {'loss_distill': (1 - F.cosine_similarity(student, teacher, dim=-1)).mean()}
 
     def loss_labels_focal(self, outputs, targets, indices, num_boxes):
         assert 'pred_logits' in outputs
@@ -318,6 +341,11 @@ class DEIMCriterion(nn.Module):
             l_dict = self.get_loss(loss, outputs, targets, indices_in, num_boxes_in, **meta)
             l_dict = {k: l_dict[k] * self.weight_dict[k] for k in l_dict if k in self.weight_dict}
             losses.update(l_dict)
+
+        if self.distill:
+            with torch.autocast(device_type=outputs['pred_logits'].device.type, enabled=False):
+                l_dict = self.loss_distillation(outputs)
+            losses.update({k: v * self.weight_dict[k] for k, v in l_dict.items()})
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:

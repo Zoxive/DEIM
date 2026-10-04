@@ -29,8 +29,33 @@ __all__ = [
     'DataLoader',
     'BaseCollateFunction',
     'BatchImageCollateFunction',
-    'batch_image_collate_fn'
+    'batch_image_collate_fn',
+    'device_batch',
 ]
+
+# Keys a uint8 batch carries in targets[0] for `device_batch` to apply on the GPU.
+MIXUP_BETA_KEY, RESIZE_KEY = '_mixup_beta', '_resize_to'
+
+
+def device_batch(images, targets):
+    """Finish a uint8 batch on the device, as BatchImageCollateFunction would have on the CPU.
+
+    A worker that ships uint8 (`ConvertPILImage(dtype='uint8', scale=False)`) sends 4x fewer bytes and skips the two
+    batch-wide CPU ops that dominated RTMDet's loader: MixUp's blend and the multi-scale resize. The collate function
+    still draws both (same RNG, same targets) and leaves the draw in targets[0]; this applies it in the same order and
+    form: /255, then `roll(1) * (1 - beta) + x * beta`, then nearest interpolation, so the result matches the CPU path
+    up to float rounding. A float batch passes through untouched."""
+    if images.dtype != torch.uint8:
+        return images, targets
+    images = images.float().div_(255.)
+    beta = targets[0].pop(MIXUP_BETA_KEY, None)
+    size = targets[0].pop(RESIZE_KEY, None)
+    if beta is not None:
+        beta = float(beta)
+        images = images.roll(shifts=1, dims=0).mul_(1.0 - beta).add_(images.mul(beta))
+    if size is not None:
+        images = F.interpolate(images, size=[int(v) for v in size])
+    return images, targets
 
 
 @register()
@@ -102,9 +127,14 @@ class BatchImageCollateFunction(BaseCollateFunction):
         mixup_prob=0.0,
         mixup_epochs=[0, 0],
         data_vis=False,
-        vis_save='./vis_dataset/'
+        vis_save='./vis_dataset/',
+        worker_threads=None,
     ) -> None:
         super().__init__()
+        # torch threads per loader worker. Each worker otherwise starts a pool the size of the machine, and with 8+
+        # workers the batch-wide CPU ops oversubscribe it. None leaves it.
+        self.worker_threads = worker_threads
+        self._threads_set = False
         self.base_size = base_size
         self.scales = generate_scales(base_size, base_size_repeat) if base_size_repeat is not None else None
         self.stop_epoch = stop_epoch if stop_epoch is not None else 100000000
@@ -142,8 +172,11 @@ class BatchImageCollateFunction(BaseCollateFunction):
             # Generate mixup ratio
             beta = round(random.uniform(0.45, 0.55), 6)
 
-            # Mix images
-            images = images.roll(shifts=1, dims=0).mul_(1.0 - beta).add_(images.mul(beta))
+            # Mix images. A uint8 batch is blended on the device instead (`device_batch`), from the same beta.
+            if images.dtype == torch.uint8:
+                targets[0][MIXUP_BETA_KEY] = torch.tensor(beta, dtype=torch.float64)
+            else:
+                images = images.roll(shifts=1, dims=0).mul_(1.0 - beta).add_(images.mul(beta))
 
             # Prepare targets for Mixup
             shifted_targets = targets[-1:] + targets[:-1]
@@ -178,6 +211,9 @@ class BatchImageCollateFunction(BaseCollateFunction):
         return images, targets
 
     def __call__(self, items):
+        if self.worker_threads and not self._threads_set and torch.utils.data.get_worker_info() is not None:
+            torch.set_num_threads(self.worker_threads)
+            self._threads_set = True
         images = torch.cat([x[0][None] for x in items], dim=0)
         targets = [x[1] for x in items]
 
@@ -190,7 +226,11 @@ class BatchImageCollateFunction(BaseCollateFunction):
             # VF.resize(inpt, sz, interpolation=self.interpolation)
 
             sz = random.choice(self.scales)
-            images = F.interpolate(images, size=sz)
+            sz_list = [sz, sz] if isinstance(sz, int) else list(sz)
+            if images.dtype == torch.uint8:
+                targets[0][RESIZE_KEY] = torch.tensor(sz_list, dtype=torch.int64)
+            else:
+                images = F.interpolate(images, size=sz)
             if 'masks' in targets[0]:
                 for tg in targets:
                     tg['masks'] = F.interpolate(tg['masks'], size=sz, mode='nearest')

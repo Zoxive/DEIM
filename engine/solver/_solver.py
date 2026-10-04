@@ -51,15 +51,33 @@ class BaseSolver(object):
             print(f'Tuning checkpoint from {self.cfg.tuning}')
             self.load_tuning_state(self.cfg.tuning)
 
+        if cfg.tf32:
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+        if cfg.cudnn_benchmark:
+            torch.backends.cudnn.benchmark = True
+        if cfg.channels_last:
+            # Before warp_model and before the EMA copy is made from this model, so both are channels-last.
+            self.model = self.model.to(memory_format=torch.channels_last)
+
         self.model = dist_utils.warp_model(
-            self.model.to(device), sync_bn=cfg.sync_bn, find_unused_parameters=cfg.find_unused_parameters
+            self.model.to(device), sync_bn=cfg.sync_bn, find_unused_parameters=cfg.find_unused_parameters,
+            compile=cfg.compile,
         )
 
         self.criterion = self.to(cfg.criterion, device)
+        # None unless the config names a teacher_model (feature distillation, training only).
+        self.teacher_model = None
         self.postprocessor = self.to(cfg.postprocessor, device)
 
         self.ema = self.to(cfg.ema, device)
         self.scaler = cfg.scaler
+        self.amp_dtype = None
+        if cfg.use_amp and device.type == 'cuda':
+            self.amp_dtype = {'float16': torch.float16, 'bfloat16': torch.bfloat16}[cfg.amp_dtype]
+        print(f'Mixed precision: {self.amp_dtype}  scaler: {self.scaler is not None}  '
+              f'tf32: {cfg.tf32}  compile: {cfg.compile}  channels_last: {cfg.channels_last}  '
+              f'cudnn_benchmark: {cfg.cudnn_benchmark}')
 
         self.device = device
         self.last_epoch = self.cfg.last_epoch
@@ -79,6 +97,9 @@ class BaseSolver(object):
 
     def train(self):
         self._setup()
+        self.teacher_model = self.to(self.cfg.teacher_model, self.device)
+        if self.teacher_model is not None:
+            print(f'Distillation teacher: {type(self.teacher_model).__name__}')
         self.optimizer = self.cfg.optimizer
         self.lr_scheduler = self.cfg.lr_scheduler
         self.lr_warmup_scheduler = self.cfg.lr_warmup_scheduler
@@ -122,6 +143,9 @@ class BaseSolver(object):
         state['last_epoch'] = self.last_epoch
 
         for k, v in self.__dict__.items():
+            # The teacher is frozen pretrained weights, not part of the run: keep it out of every checkpoint.
+            if k == 'teacher_model':
+                continue
             if hasattr(v, 'state_dict'):
                 v = dist_utils.de_parallel(v)
                 state[k] = v.state_dict()
@@ -135,6 +159,8 @@ class BaseSolver(object):
             print('Load last_epoch')
 
         for k, v in self.__dict__.items():
+            if k == 'teacher_model':
+                continue
             if hasattr(v, 'load_state_dict') and k in state:
                 v = dist_utils.de_parallel(v)
                 v.load_state_dict(state[k])

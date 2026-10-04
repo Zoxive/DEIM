@@ -21,9 +21,15 @@ __all__ = [
 INCLUDE_KEY = '__include__'
 
 
-def load_config(file_path, cfg=dict()):
+def load_config(file_path, cfg=None):
     """load config
+
+    `cfg` is the accumulator the `__include__` recursion shares within one top-level call. It used to default to a
+    `dict()` evaluated once, so every config loaded in a process merged into the same dict: two YAMLConfigs in one
+    process saw each other's keys (found 2026-10-01 when an `act: relu` from one RTMDet config appeared in another).
     """
+    if cfg is None:
+        cfg = {}
     _, ext = os.path.splitext(file_path)
     assert ext in ['.yml', '.yaml'], "only support yaml files"
 

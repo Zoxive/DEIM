@@ -1,0 +1,21 @@
+# Bakeoff arm: DEIM-D-FINE-N on training set variant d, fish and board only, RandomRotate90, rebuilt set, AIFI attention in fp32 under AMP, 48 epochs.
+__include__: [
+  './bakeoff_d-nohand-rot90-nc-fp32attn-n-e32.yml',
+]
+
+output_dir: ./outputs/bakeoff_d-nohand-rot90-nc-fp32attn-n-e48
+
+epoches: 48
+
+flat_epoch: 24
+no_aug_epoch: 6
+
+train_dataloader:
+  num_workers: 8
+  dataset:
+    transforms:
+      policy:
+        epoch: [1, 24, 42]
+  collate_fn:
+    mixup_epochs: [1, 24]
+    stop_epoch: 42

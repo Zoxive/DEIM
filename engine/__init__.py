@@ -6,6 +6,7 @@ Copyright (c) 2024 The DEIM Authors. All Rights Reserved.
 from . import optim
 from . import data
 from . import deim
+from . import rtmdet
 
 from .backbone import *
 

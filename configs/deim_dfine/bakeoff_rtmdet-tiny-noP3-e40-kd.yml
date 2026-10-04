@@ -1,0 +1,24 @@
+# Bakeoff arm: RTMDet-tiny, strides 16/32 (no stride-8 level), 40 epochs, feature distillation from a DEIM teacher (engine/rtmdet).
+__include__: [
+  './bakeoff_rtmdet-tiny-noP3-e40.yml',
+]
+
+output_dir: ./outputs/bakeoff_rtmdet-tiny-noP3-e40-kd
+
+epoches: 40
+
+teacher_model: DEIMTeacher
+
+DEIMTeacher:
+  config: configs/deim_dfine/bakeoff_d-nohand-rot90-nc-fp32attn.yml
+  checkpoint: outputs/bakeoff_d-nohand-rot90-nc-fp32attn/best_stg1.pth
+  fp16: True
+
+RTMDet:
+  arch: tiny
+  act: silu
+  strides: [16, 32]
+  distill_dim: 256
+
+RTMDetCriterion:
+  weight_dict: {loss_cls: 1.0, loss_bbox: 2.0, loss_distill: 2.0}

@@ -22,6 +22,34 @@ import wandb
 
 class DetSolver(BaseSolver):
 
+    def _retune_distill_weight(self, epoch, grad_percentages):
+        """RT-DETRv4's adaptive distillation weight (ported from its det_solver.py): after each epoch,
+        move weight_dict['loss_distill'] so the encoder transformer's share of the gradient heads back into
+        rho +- delta percent, at most 10x either way; from the no-mixup phase on, reset to default_weight."""
+        params = self.criterion.distill_adaptive_params
+        default_weight = params.get('default_weight')
+        avg = sum(grad_percentages) / len(grad_percentages) if grad_percentages else 0.0
+        current = self.criterion.weight_dict.get('loss_distill', 0.0)
+        new, reason = current, 'unchanged'
+        if avg < 1e-6:
+            if default_weight is not None:
+                new, reason = default_weight, 'reset_to_default_zero_grad'
+        elif epoch >= self.train_dataloader.collate_fn.stop_epoch:
+            if default_weight is not None:
+                new, reason = default_weight, 'ema_phase_default'
+        else:
+            lower, upper = params['rho'] - params['delta'], params['rho'] + params['delta']
+            if not (lower <= avg <= upper) and current > 1e-6:
+                target = upper if avg < lower else lower
+                p_current, p_target = avg / 100.0, target / 100.0
+                denominator = p_current * (1.0 - p_target)
+                if abs(denominator) >= 1e-9:
+                    ratio = max(p_target * (1.0 - p_current) / denominator, 0.1)
+                    new = min(max(current * ratio, current / 10.0), current * 10.0)
+                    reason = f'adjusted_to_{target:.2f}%'
+        self.criterion.weight_dict['loss_distill'] = new
+        print(f'Epoch {epoch}: avg encoder grad {avg:.2f}% | distill {current:.6f} -> {new:.6f} ({reason})')
+
     def fit(self, ):
         self.train()
         args = self.cfg
@@ -45,6 +73,12 @@ class DetSolver(BaseSolver):
             self.self_lr_scheduler = True
         n_parameters = sum([p.numel() for p in self.model.parameters() if p.requires_grad])
         print(f'number of trainable parameters: {n_parameters}')
+
+        self.nonfinite_guard = None
+        if args.nonfinite_guard:
+            from .nonfinite_guard import NonFiniteGuard
+            self.nonfinite_guard = NonFiniteGuard(dist_utils.de_parallel(self.model), self.output_dir,
+                                                  max_skips=args.nonfinite_max_skips)
 
         top1 = 0
         best_stat = {'epoch': -1, }
@@ -93,9 +127,16 @@ class DetSolver(BaseSolver):
                 print_freq=args.print_freq, 
                 ema=self.ema, 
                 scaler=self.scaler, 
+                amp_dtype=self.amp_dtype,
+                nonfinite_guard=self.nonfinite_guard,
                 lr_warmup_scheduler=self.lr_warmup_scheduler,
-                writer=self.writer
+                writer=self.writer,
+                teacher_model=self.teacher_model,
+                channels_last=self.cfg.channels_last,
             )
+            if isinstance(train_stats, tuple):
+                train_stats, encoder_grad_percentages = train_stats
+                self._retune_distill_weight(epoch, encoder_grad_percentages)
 
             if not self.self_lr_scheduler:  # update by epoch 
                 if self.lr_warmup_scheduler is None or self.lr_warmup_scheduler.finished():

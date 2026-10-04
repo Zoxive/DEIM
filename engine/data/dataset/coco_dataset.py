@@ -5,6 +5,10 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 Copyright(c) 2023 lyuwenyu. All Rights Reserved.
 """
 
+import copy
+import os
+import random
+
 import torch
 import torch.utils.data
 
@@ -29,9 +33,19 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
     __inject__ = ['transforms', ]
     __share__ = ['remap_mscoco_category']
 
-    def __init__(self, img_folder, ann_file, transforms, return_masks=False, remap_mscoco_category=False):
+    def __init__(self, img_folder, ann_file, transforms, return_masks=False, remap_mscoco_category=False,
+                 phone_dir=None, phone_p=0.0, phone_variants=3):
         super(CocoDetection, self).__init__(img_folder, ann_file)
         self._transforms = transforms
+        # Phone-downscale augmentation (renditions made offline, one subfolder per variant). With probability phone_p
+        # the cache image is swapped for one of `phone_variants` renditions of the ORIGINAL photo, shrunk to a
+        # 640x640 squash the way an Android or iOS app shrinks it; the boxes are scaled to match. Every image must
+        # have its renditions: a missing one raises rather than silently training on the cache.
+        self.phone_dir = phone_dir
+        self.phone_p = float(phone_p)
+        self.phone_variants = int(phone_variants)
+        if self.phone_p > 0 and not (phone_dir and os.path.isdir(phone_dir)):
+            raise FileNotFoundError(f'phone_p={phone_p} but no phone renditions at {phone_dir!r}')
         self.prepare = ConvertCocoPolysToMask(return_masks)
         self.img_folder = img_folder
         self.ann_file = ann_file
@@ -46,6 +60,8 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
 
     def load_item(self, idx):
         image, target = super(CocoDetection, self).__getitem__(idx)
+        if self.phone_p > 0 and random.random() < self.phone_p:
+            image, target = self._phone_rendition(idx, image, target)
         image_id = self.ids[idx]
         target = {'image_id': image_id, 'annotations': target}
 
@@ -63,6 +79,26 @@ class CocoDetection(torchvision.datasets.CocoDetection, DetDataset):
             target['masks'] = convert_to_tv_tensor(target['masks'], key='masks')
 
         return image, target
+
+    def _phone_rendition(self, idx, image, annotations):
+        file_name = self.coco.loadImgs(self.ids[idx])[0]['file_name']
+        path = os.path.join(self.phone_dir, str(random.randrange(self.phone_variants)), file_name)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f'no phone rendition {path} for {file_name}; render this set first')
+        phone = Image.open(path).convert('RGB')
+        sx, sy = phone.width / image.width, phone.height / image.height
+        # loadAnns hands back the COCO index's own dicts; scale copies, never the index.
+        scaled = []
+        for annotation in annotations:
+            annotation = copy.copy(annotation)
+            x, y, w, h = annotation['bbox']
+            annotation['bbox'] = [x * sx, y * sy, w * sx, h * sy]
+            if 'area' in annotation:
+                annotation['area'] = annotation['area'] * sx * sy
+            if annotation.get('segmentation'):
+                raise ValueError(f'{file_name}: phone renditions do not scale segmentations')
+            scaled.append(annotation)
+        return phone, scaled
 
     def extra_repr(self) -> str:
         s = f' img_folder: {self.img_folder}\n ann_file: {self.ann_file}\n'

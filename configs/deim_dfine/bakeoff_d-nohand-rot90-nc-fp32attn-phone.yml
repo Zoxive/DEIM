@@ -1,0 +1,14 @@
+# Bakeoff arm: DEIM-D-FINE-S on training set variant d, fish and board only, RandomRotate90, rebuilt set, AIFI attention in fp32 under AMP, phone-downscale augmentation.
+__include__: [
+  './bakeoff_d-nohand-rot90-nc-fp32attn.yml',
+]
+
+output_dir: ./outputs/bakeoff_d-nohand-rot90-nc-fp32attn-phone
+
+epoches: 16
+
+train_dataloader:
+  dataset:
+    phone_dir: ../coco_bakeoff/phone640
+    phone_p: 0.75
+    phone_variants: 3

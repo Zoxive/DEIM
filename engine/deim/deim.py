@@ -23,10 +23,19 @@ class DEIM(nn.Module):
         self.decoder = decoder
         self.encoder = encoder
 
-    def forward(self, x, targets=None):
+    def forward(self, x, targets=None, teacher_encoder_output=None):
         x = self.backbone(x)
         x = self.encoder(x)
+        # With distillation on (HybridEncoder.distill_teacher_dim > 0) the encoder returns
+        # (features, projected F5) in training; the criterion's `distill` loss reads both maps.
+        student_distill_output = None
+        if isinstance(x, tuple):
+            x, student_distill_output = x
         x = self.decoder(x, targets)
+
+        if self.training and student_distill_output is not None and teacher_encoder_output is not None:
+            x['student_distill_output'] = student_distill_output
+            x['teacher_encoder_output'] = teacher_encoder_output
 
         return x
 

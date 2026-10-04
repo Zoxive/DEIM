@@ -1,0 +1,12 @@
+# Eval only: the fp32-attention DEIM-D-FINE-N arm, 48-epoch arm decoded at 30 queries.
+__include__: [
+  './bakeoff_d-nohand-rot90-nc-fp32attn-n-e48.yml',
+]
+
+output_dir: ./outputs/eval_fp32attn-n-e48-q30
+
+DFINETransformer:
+  num_queries: 30
+
+PostProcessor:
+  num_top_queries: 30

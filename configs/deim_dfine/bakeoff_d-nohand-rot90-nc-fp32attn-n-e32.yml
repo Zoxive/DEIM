@@ -1,0 +1,36 @@
+# Bakeoff arm: DEIM-D-FINE-N on training set variant d, fish and board only, RandomRotate90, rebuilt set, AIFI attention in fp32 under AMP, 32 epochs.
+__include__: [
+  './bakeoff_d-nohand-rot90-nc-fp32attn-n.yml',
+]
+
+output_dir: ./outputs/bakeoff_d-nohand-rot90-nc-fp32attn-n-e32
+
+epoches: 32
+
+flat_epoch: 16
+no_aug_epoch: 4
+
+train_dataloader:
+  num_workers: 16
+  pin_memory: True
+  dataset:
+    transforms:
+      ops:
+        - {type: Mosaic, output_size: 320, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+           probability: 1.0, fill_value: 0, use_cache: False, max_cached_images: 50, random_pop: True}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, fill: 0}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: RandomHorizontalFlip}
+        - {type: RandomRotate90, p: 0.3, angles: [90, 270]}
+        - {type: Resize, size: [640, 640], }
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'uint8', scale: False}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      policy:
+        epoch: [1, 16, 28]
+  collate_fn:
+    mixup_epochs: [1, 16]
+    stop_epoch: 28
+    worker_threads: 1

@@ -1,0 +1,25 @@
+# Bakeoff arm: DEIM-D-FINE-S with RT-DETRv4 init plus DINOv3 feature distillation.
+__include__: [
+  './bakeoff_d-nohand-rot90-nc-fp32attn.yml',
+]
+
+output_dir: ./outputs/bakeoff_rtv4-full
+
+epoches: 16
+
+teacher_model: DINOv3Teacher
+
+DINOv3Teacher:
+  model_id: facebook/dinov3-vitb16-pretrain-lvd1689m
+
+HybridEncoder:
+  distill_teacher_dim: 768
+
+DEIMCriterion:
+  weight_dict: {loss_mal: 1, loss_bbox: 5, loss_giou: 2, loss_fgl: 0.15, loss_ddf: 1.5, loss_distill: 5}
+  losses: ['mal', 'boxes', 'local', 'distill']
+  distill_adaptive_params:
+    enabled: True
+    rho: 11
+    delta: 1
+    default_weight: 20

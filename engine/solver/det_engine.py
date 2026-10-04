@@ -14,11 +14,28 @@ from typing import Iterable
 import torch
 import torch.amp
 from torch.utils.tensorboard import SummaryWriter
-from torch.cuda.amp.grad_scaler import GradScaler
+from torch.amp.grad_scaler import GradScaler
 
 from ..optim import ModelEMA, Warmup
-from ..data import CocoEvaluator
+from ..data import CocoEvaluator, device_batch
 from ..misc import MetricLogger, SmoothedValue, dist_utils
+
+
+def _encoder_transformer_grad_percentage(model: torch.nn.Module):
+    """The AIFI encoder transformer's share of the whole model's gradient L1, in percent (RT-DETRv4's
+    signal for retuning the distillation weight; det_solver.py). The loss scale cancels in the ratio.
+    None on a step whose gradients overflowed, which the scaler skips anyway."""
+    total, encoder = 0.0, 0.0
+    for name, param in dist_utils.de_parallel(model).named_parameters():
+        if param.grad is None:
+            continue
+        value = param.grad.detach().abs().sum().item()
+        total += value
+        if name.startswith('encoder.encoder'):
+            encoder += value
+    if total <= 0.0 or not math.isfinite(total):
+        return None
+    return 100.0 * encoder / total
 
 
 def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, criterion: torch.nn.Module,
@@ -35,20 +52,61 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
 
     ema :ModelEMA = kwargs.get('ema', None)
     scaler :GradScaler = kwargs.get('scaler', None)
+    # torch dtype when mixed precision is on, else None. A scaler without a dtype was the original
+    # code path (fp16 by CUDA default); keep that reading so nothing that passes only `scaler` changes.
+    amp_dtype :torch.dtype = kwargs.get('amp_dtype', torch.float16 if scaler is not None else None)
     lr_warmup_scheduler :Warmup = kwargs.get('lr_warmup_scheduler', None)
+
+    # engine/solver/nonfinite_guard.py - opt-in with `--nonfinite-guard`; None leaves the loop as it was.
+    guard = kwargs.get('nonfinite_guard', None)
+    channels_last = kwargs.get('channels_last', False)
+
+    # Feature distillation (engine/deim/dinov3_teacher.py): None leaves the loop as it was. With a teacher,
+    # the encoder's gradient share is collected per step when the criterion retunes its weight.
+    teacher_model = kwargs.get('teacher_model', None)
+    adaptive = bool((getattr(criterion, 'distill_adaptive_params', None) or {}).get('enabled', False))
+    encoder_grad_percentages = []
+    model_kwargs = {}
 
     cur_iters = epoch * len(data_loader)
 
     for i, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
-        samples = samples.to(device)
-        targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+        samples = samples.to(device, non_blocking=True)
+        targets = [{k: v.to(device, non_blocking=True) for k, v in t.items()} for t in targets]
+        # A uint8 batch (ConvertPILImage dtype uint8) is scaled, mixed up and resized here, on the GPU.
+        samples, targets = device_batch(samples, targets)
+        if channels_last:
+            samples = samples.contiguous(memory_format=torch.channels_last)
         global_step = epoch * len(data_loader) + i
         metas = dict(epoch=epoch, step=i, global_step=global_step, epoch_step=len(data_loader))
 
-        if scaler is not None:
-            with torch.autocast(device_type=str(device), cache_enabled=True):
-                outputs = model(samples, targets=targets)
+        if teacher_model is not None:
+            # fp32, outside autocast, as upstream RT-DETRv4 runs it.
+            model_kwargs = {'teacher_encoder_output': teacher_model(samples)}
 
+        if guard is not None and amp_dtype is not None:
+            guard.snapshot()
+            with torch.autocast(device_type=str(device), dtype=amp_dtype, cache_enabled=True):
+                outputs = model(samples, targets=targets, **model_kwargs)
+            boxes_finite = bool(torch.isfinite(outputs['pred_boxes']).all())
+            guard.log_step(epoch, i, targets, boxes_finite)
+            if not boxes_finite:
+                del outputs
+                optimizer.zero_grad(set_to_none=True)
+                guard.handle(samples, targets, epoch, i, amp_dtype, dataset=getattr(data_loader, 'dataset', None))
+                # The step is skipped: no backward, no optimizer or EMA update. The LR schedule is indexed
+                # by iteration, so it still advances and the run stays on the same schedule.
+                if self_lr_scheduler:
+                    optimizer = lr_scheduler.step(cur_iters + i, optimizer)
+                elif lr_warmup_scheduler is not None:
+                    lr_warmup_scheduler.step()
+                continue
+
+        elif amp_dtype is not None:
+            with torch.autocast(device_type=str(device), dtype=amp_dtype, cache_enabled=True):
+                outputs = model(samples, targets=targets, **model_kwargs)
+
+        if amp_dtype is not None:
             if torch.isnan(outputs['pred_boxes']).any() or torch.isinf(outputs['pred_boxes']).any():
                 print(outputs['pred_boxes'])
                 state = model.state_dict()
@@ -65,18 +123,34 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
                 loss_dict = criterion(outputs, targets, **metas)
 
             loss = sum(loss_dict.values())
-            scaler.scale(loss).backward()
+            if scaler is not None:
+                scaler.scale(loss).backward()
 
-            if max_norm > 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+                if max_norm > 0:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
 
-            scaler.step(optimizer)
-            scaler.update()
+                if adaptive:
+                    pct = _encoder_transformer_grad_percentage(model)
+                    if pct is not None:
+                        encoder_grad_percentages.append(pct)
+
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                # bfloat16: fp32's exponent range, so no loss scaling and no skipped steps.
+                loss.backward()
+                if max_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+                if adaptive:
+                    pct = _encoder_transformer_grad_percentage(model)
+                    if pct is not None:
+                        encoder_grad_percentages.append(pct)
+                optimizer.step()
             optimizer.zero_grad()
 
         else:
-            outputs = model(samples, targets=targets)
+            outputs = model(samples, targets=targets, **model_kwargs)
             loss_dict = criterion(outputs, targets, **metas)
 
             loss : torch.Tensor = sum(loss_dict.values())
@@ -85,6 +159,11 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
 
             if max_norm > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+
+            if adaptive:
+                pct = _encoder_transformer_grad_percentage(model)
+                if pct is not None:
+                    encoder_grad_percentages.append(pct)
 
             optimizer.step()
 
@@ -119,7 +198,10 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    if adaptive:
+        return stats, encoder_grad_percentages
+    return stats
 
 
 @torch.no_grad()

@@ -1,0 +1,35 @@
+# Bakeoff arm: RTMDet-tiny, strides 16/32 (no stride-8 level), 40 epochs, a distribution box head (reg_max 32, DFL) (engine/rtmdet).
+__include__: [
+  './bakeoff_rtmdet-tiny-noP3-e40-fast.yml',
+]
+
+output_dir: ./outputs/bakeoff_rtmdet-tiny-noP3-e40-dfl
+
+epoches: 40
+
+RTMDet:
+  arch: tiny
+  act: silu
+  strides: [16, 32]
+  reg_max: 32
+
+RTMDetCriterion:
+  weight_dict: {loss_cls: 1.0, loss_bbox: 2.0, loss_dfl: 0.25}
+  topk: 13
+
+train_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: Mosaic, output_size: 320, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+           probability: 1.0, fill_value: 0, use_cache: False, max_cached_images: 50, random_pop: True}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, fill: 0}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: RandomHorizontalFlip}
+        - {type: RandomRotate90, p: 0.3, angles: [90, 270]}
+        - {type: Resize, size: [640, 640], }
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'uint8', scale: False}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}

@@ -29,6 +29,10 @@ def main(args, ) -> None:
     """main
     """
     #dist_utils.setup_distributed(args.print_rank, args.print_method, seed=args.seed)
+    # setup_distributed was the only caller of setup_seed, so with it commented out `--seed` seeded
+    # nothing: runs before this fix were unseeded whatever seed they were given.
+    if args.seed is not None:
+        dist_utils.setup_seed(args.seed)
 
     assert not all([args.tuning, args.resume]), \
         'Only support from_scrach or resume or tuning at one time'
@@ -66,7 +70,17 @@ if __name__ == '__main__':
     parser.add_argument('-t', '--tuning', type=str, help='tuning from checkpoint')
     parser.add_argument('-d', '--device', type=str, help='device',)
     parser.add_argument('--seed', type=int, help='exp reproducibility')
-    parser.add_argument('--use-amp', action='store_true', help='auto mixed precision training')
+    # default=None on the flags below: main() merges every non-None arg over the YAML, so a
+    # store_true default of False would silently turn `use_amp: True` in base/optimizer.yml back off.
+    parser.add_argument('--use-amp', action='store_true', default=None, help='auto mixed precision training')
+    parser.add_argument('--amp-dtype', type=str, choices=['float16', 'bfloat16'], help='autocast dtype (default float16)')
+    parser.add_argument('--tf32', action='store_true', default=None, help='TF32 for the fp32 matmuls autocast leaves alone')
+    parser.add_argument('--compile', action='store_true', default=None, help='torch.compile the model')
+    parser.add_argument('--channels-last', action='store_true', default=None, help='channels-last weights and inputs')
+    parser.add_argument('--cudnn-benchmark', action='store_true', default=None, help='cuDNN autotuning per input shape')
+    parser.add_argument('--nonfinite-guard', action='store_true', default=None,
+                        help='record, diagnose and skip a batch with non-finite predictions (engine/solver/nonfinite_guard.py)')
+    parser.add_argument('--nonfinite-max-skips', type=int, help='raise after this many guarded batches (default 10)')
     parser.add_argument('--output-dir', type=str, help='output directoy')
     parser.add_argument('--summary-dir', type=str, help='tensorboard summry')
     parser.add_argument('--test-only', action='store_true', default=False,)

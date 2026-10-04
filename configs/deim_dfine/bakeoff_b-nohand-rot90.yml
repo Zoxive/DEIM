@@ -1,0 +1,60 @@
+# Bakeoff arm: DEIM-D-FINE-S on training set variant b, fish and board only, RandomRotate90.
+__include__: [
+  './dfine_hgnetv2_s_coco.yml',
+  '../base/deim.yml'
+]
+
+output_dir: ./outputs/bakeoff_b-nohand-rot90
+
+num_classes: 2
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?!.*bn).*$'
+      lr: 0.0002
+    -
+      params: '^(?=.*(?:norm|bn)).*$'
+      weight_decay: 0.
+
+  lr: 0.0004
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
+
+epoches: 72
+
+flat_epoch: 36
+no_aug_epoch: 9
+
+train_dataloader:
+  total_batch_size: 16
+  dataset:
+    img_folder: ../coco_bakeoff/images
+    ann_file: ../coco_bakeoff/b-nohand-rot90/_annotations.coco.json
+    transforms:
+      ops:
+        - {type: Mosaic, output_size: 320, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+           probability: 1.0, fill_value: 0, use_cache: False, max_cached_images: 50, random_pop: True}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, fill: 0}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: RandomHorizontalFlip}
+        - {type: RandomRotate90, p: 0.3, angles: [90, 270]}
+        - {type: Resize, size: [640, 640], }
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+      policy:
+        epoch: [3, 36, 63]
+
+  collate_fn:
+    mixup_epochs: [3, 36]
+    stop_epoch: 63
+
+val_dataloader:
+  total_batch_size: 16
+  dataset:
+    img_folder: ../coco/valid
+    ann_file: ../coco_bakeoff/valid-nohand/_annotations.coco.json

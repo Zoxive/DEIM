@@ -1,0 +1,13 @@
+# Bakeoff arm: RTMDet-s, strides 16/32 (no stride-8 level), 40 epochs (engine/rtmdet).
+__include__: [
+  './bakeoff_rtmdet-tiny-noP3-e40-exact.yml',
+]
+
+output_dir: ./outputs/bakeoff_rtmdet-s-noP3-e40
+
+epoches: 40
+
+RTMDet:
+  arch: s
+  act: silu
+  strides: [16, 32]

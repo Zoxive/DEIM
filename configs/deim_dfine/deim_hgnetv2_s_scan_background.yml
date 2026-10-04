@@ -1,0 +1,42 @@
+# DEIM-D-FINE-S fine-tuned with background (object-free) images added to training.
+__include__: [
+  './dfine_hgnetv2_s_coco.yml',
+  '../base/deim.yml'
+]
+
+output_dir: ./outputs/deim_hgnetv2_s_scan_background
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?!.*bn).*$'
+      lr: 0.0002
+    -
+      params: '^(?=.*(?:norm|bn)).*$'
+      weight_decay: 0.
+
+  lr: 0.0004
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
+
+epoches: 48
+
+flat_epoch: 24
+no_aug_epoch: 6
+
+train_dataloader:
+  total_batch_size: 16
+  dataset:
+    img_folder: ../coco_scan_background/train
+    ann_file: ../coco_scan_background/train/_annotations.coco.json
+    transforms:
+      policy:
+        epoch: [2, 24, 42]
+
+  collate_fn:
+    mixup_epochs: [2, 24]
+    stop_epoch: 42
+
+val_dataloader:
+  total_batch_size: 16

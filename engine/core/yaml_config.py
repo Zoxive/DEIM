@@ -51,6 +51,13 @@ class YAMLConfig(BaseConfig):
         return super().criterion
 
     @property
+    def teacher_model(self, ) -> torch.nn.Module:
+        # Only built when something asks: evaluation and export never do, so they need no teacher.
+        if self._teacher_model is None and 'teacher_model' in self.yaml_cfg:
+            self._teacher_model = create(self.yaml_cfg['teacher_model'], self.global_cfg)
+        return super().teacher_model
+
+    @property
     def optimizer(self, ) -> optim.Optimizer:
         if self._optimizer is None and 'optimizer' in self.yaml_cfg:
             params = self.get_optim_params(self.yaml_cfg['optimizer'], self.model)
@@ -90,7 +97,7 @@ class YAMLConfig(BaseConfig):
 
     @property
     def scaler(self, ):
-        if self._scaler is None and self.yaml_cfg.get('use_amp', False):
+        if self._scaler is None and self.yaml_cfg.get('use_amp', False) and self.amp_dtype == 'float16':
             self._scaler = create('scaler', self.global_cfg)
         return super().scaler
 

@@ -1,0 +1,42 @@
+# Bakeoff arm: DEIM-D-FINE-S on training set variant d.
+__include__: [
+  './dfine_hgnetv2_s_coco.yml',
+  '../base/deim.yml'
+]
+
+output_dir: ./outputs/bakeoff_d
+
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?!.*bn).*$'
+      lr: 0.0002
+    -
+      params: '^(?=.*(?:norm|bn)).*$'
+      weight_decay: 0.
+
+  lr: 0.0004
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001
+
+epoches: 16
+
+flat_epoch: 8
+no_aug_epoch: 2
+
+train_dataloader:
+  total_batch_size: 16
+  dataset:
+    img_folder: ../coco_bakeoff/images
+    ann_file: ../coco_bakeoff/d/_annotations.coco.json
+    transforms:
+      policy:
+        epoch: [1, 8, 14]
+
+  collate_fn:
+    mixup_epochs: [1, 8]
+    stop_epoch: 14
+
+val_dataloader:
+  total_batch_size: 16

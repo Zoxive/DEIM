@@ -1,0 +1,8 @@
+# Bakeoff arm: DEIM-D-FINE-S with RT-DETRv4 init, no distillation.
+__include__: [
+  './bakeoff_d-nohand-rot90-nc-fp32attn.yml',
+]
+
+output_dir: ./outputs/bakeoff_rtv4-init
+
+epoches: 16

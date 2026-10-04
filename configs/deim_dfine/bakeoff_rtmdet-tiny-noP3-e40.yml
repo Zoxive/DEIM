@@ -1,0 +1,20 @@
+# Bakeoff arm: RTMDet-tiny, strides 16/32 (no stride-8 level), 40 epochs (engine/rtmdet).
+__include__: [
+  './bakeoff_rtmdet-tiny-noP3.yml',
+]
+
+output_dir: ./outputs/bakeoff_rtmdet-tiny-noP3-e40
+
+epoches: 40
+
+flat_epoch: 20
+no_aug_epoch: 5
+
+train_dataloader:
+  dataset:
+    transforms:
+      policy:
+        epoch: [1, 20, 35]
+  collate_fn:
+    mixup_epochs: [1, 20]
+    stop_epoch: 35

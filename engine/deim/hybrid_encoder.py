@@ -221,9 +221,16 @@ class TransformerEncoderLayer(nn.Module):
                  dim_feedforward=2048,
                  dropout=0.1,
                  activation="relu",
-                 normalize_before=False):
+                 normalize_before=False,
+                 fp32_attention=False):
         super().__init__()
         self.normalize_before = normalize_before
+        # Under fp16 autocast, nn.MultiheadAttention's q @ k^T is an fp16 bmm and the pre-softmax logits
+        # can reach fp16's 65,504 in training (seen with train-mode BN on unfrozen backbone norms, as
+        # NaN runs). A positive overflow is +inf, the softmax makes
+        # it NaN, and the matcher's box assertion is the first thing to notice. This runs the one attention
+        # call in fp32; measured at no step-time cost (400 tokens). Off: numerics exactly as before.
+        self.fp32_attention = fp32_attention
 
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout, batch_first=True)
 
@@ -246,7 +253,12 @@ class TransformerEncoderLayer(nn.Module):
         if self.normalize_before:
             src = self.norm1(src)
         q = k = self.with_pos_embed(src, pos_embed)
-        src, _ = self.self_attn(q, k, value=src, attn_mask=src_mask)
+        if self.fp32_attention and torch.is_autocast_enabled():
+            with torch.autocast(device_type=src.device.type, enabled=False):
+                attn, _ = self.self_attn(q.float(), k.float(), value=src.float(), attn_mask=src_mask)
+            src = attn.to(residual.dtype)
+        else:
+            src, _ = self.self_attn(q, k, value=src, attn_mask=src_mask)
 
         src = residual + self.dropout1(src)
         if not self.normalize_before:
@@ -300,6 +312,8 @@ class HybridEncoder(nn.Module):
                  act='silu',
                  eval_spatial_size=None,
                  version='dfine',
+                 fp32_attention=False,
+                 distill_teacher_dim=0,
                  ):
         super().__init__()
         self.in_channels = in_channels
@@ -328,7 +342,8 @@ class HybridEncoder(nn.Module):
             nhead=nhead,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
-            activation=enc_act
+            activation=enc_act,
+            fp32_attention=fp32_attention,
             )
 
         self.encoder = nn.ModuleList([
@@ -361,6 +376,15 @@ class HybridEncoder(nn.Module):
                 RepNCSPELAN4(hidden_dim * 2, hidden_dim, hidden_dim * 2, round(expansion * hidden_dim // 2), round(3 * depth_mult), act=act) \
                 if version == 'dfine' else CSPLayer(hidden_dim * 2, hidden_dim, round(3 * depth_mult), act=act, expansion=expansion, bottletype=VGGBlock)
             )
+
+        # RT-DETRv4 feature distillation (engine/deim/dinov3_teacher.py): in training, a Linear projects the
+        # last AIFI output (F5) to the teacher's width and the criterion's `distill` loss pulls it toward
+        # the teacher's patch tokens. Built last so every other module draws the same initial weights as
+        # a run without it. 0 (the default): no projector, and forward returns exactly what it did.
+        self.distill_teacher_dim = distill_teacher_dim
+        self.feature_projector = None
+        if distill_teacher_dim > 0:
+            self.feature_projector = nn.Sequential(nn.Linear(hidden_dim, distill_teacher_dim))
 
         self._reset_parameters()
 
@@ -396,6 +420,8 @@ class HybridEncoder(nn.Module):
         assert len(feats) == len(self.in_channels)
         proj_feats = [self.input_proj[i](feat) for i, feat in enumerate(feats)]
 
+        distill_student_output = None
+
         # encoder
         if self.num_encoder_layers > 0:
             for i, enc_ind in enumerate(self.use_encoder_idx):
@@ -410,6 +436,10 @@ class HybridEncoder(nn.Module):
 
                 memory :torch.Tensor = self.encoder[i](src_flatten, pos_embed=pos_embed)
                 proj_feats[enc_ind] = memory.permute(0, 2, 1).reshape(-1, self.hidden_dim, h, w).contiguous()
+
+                if self.training and self.feature_projector is not None and enc_ind == self.use_encoder_idx[-1]:
+                    distill_student_output = self.feature_projector(
+                        proj_feats[enc_ind].permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
         # broadcasting and fusion
         inner_outs = [proj_feats[-1]]
@@ -430,4 +460,6 @@ class HybridEncoder(nn.Module):
             out = self.pan_blocks[idx](torch.concat([downsample_feat, feat_height], dim=1))
             outs.append(out)
 
+        if distill_student_output is not None:
+            return outs, distill_student_output
         return outs
