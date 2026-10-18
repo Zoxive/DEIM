@@ -52,8 +52,9 @@ def main(args, ):
     model = Model()
     model.eval()
 
-    data = torch.rand(32, 3, 640, 640)
-    size = torch.tensor([[640, 640]])
+    h, w = cfg.yaml_cfg['eval_spatial_size']
+    data = torch.rand(32, 3, h, w)
+    size = torch.tensor([[w, h]])
     _ = model(data, size)
 
     dynamic_axes = {
