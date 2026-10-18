@@ -1,0 +1,8 @@
+# Eval only: the fp32-attention DEIM-D-FINE-N arm decoded at 20 queries, built for a 512x512 squash.
+__include__: [
+  './eval_fp32attn-n-e48-q20.yml',
+]
+
+output_dir: ./outputs/eval_fp32attn-n-e48-q20-s512
+
+eval_spatial_size: [512, 512]
