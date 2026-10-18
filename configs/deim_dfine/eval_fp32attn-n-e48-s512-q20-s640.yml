@@ -1,0 +1,8 @@
+# Eval only: the 512-trained DEIM-D-FINE-N 48-epoch arm decoded at 20 queries, built for a 640x640 squash.
+__include__: [
+  './eval_fp32attn-n-e48-s512-q20.yml',
+]
+
+output_dir: ./outputs/eval_fp32attn-n-e48-s512-q20-s640
+
+eval_spatial_size: [640, 640]
