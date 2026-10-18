@@ -1,0 +1,38 @@
+# Bakeoff arm: the shipped DEIM-D-FINE-N 48-epoch arm, trained and evaluated on a 512x512 squash instead of 640.
+# Every 640 in the recipe scales by 0.8: Mosaic tiles 320 -> 256, multi-scale base 640 -> 512 (384-640).
+__include__: [
+  './bakeoff_d-nohand-rot90-nc-fp32attn-n-e48.yml',
+]
+
+output_dir: ./outputs/bakeoff_d-nohand-rot90-nc-fp32attn-n-e48-s512
+
+eval_spatial_size: [512, 512]
+
+train_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: Mosaic, output_size: 256, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+           probability: 1.0, fill_value: 0, use_cache: False, max_cached_images: 50, random_pop: True}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, fill: 0}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: RandomHorizontalFlip}
+        - {type: RandomRotate90, p: 0.3, angles: [90, 270]}
+        - {type: Resize, size: [512, 512], }
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'uint8', scale: False}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+  collate_fn:
+    base_size: 512
+
+# The trainer's own validation (it picks best_stg1): the control's valid-nohand less the 8 photos the 10-06
+# coco/valid rebuild removed, which no longer exist on disk.
+val_dataloader:
+  dataset:
+    ann_file: ../coco_bakeoff/valid-nohand-294/_annotations.coco.json
+    transforms:
+      ops:
+        - {type: Resize, size: [512, 512], }
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
