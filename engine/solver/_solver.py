@@ -10,6 +10,19 @@ from ..misc import dist_utils
 from ..core import BaseConfig
 
 
+def _fake_quant():
+    """The per-channel weight grid shared with the other trainers of the repository this one
+    is a submodule of: `tools/quant/fake_quant.py`."""
+    import sys
+    tools = Path(__file__).resolve().parents[4] / 'tools'
+    if not (tools / 'quant' / 'fake_quant.py').is_file():
+        raise RuntimeError(f'--fake-quant needs {tools}/quant/fake_quant.py')
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    from quant import fake_quant
+    return fake_quant
+
+
 def to(m: nn.Module, device: str):
     if m is None:
         return None
@@ -50,6 +63,16 @@ class BaseSolver(object):
         if self.cfg.tuning:
             print(f'Tuning checkpoint from {self.cfg.tuning}')
             self.load_tuning_state(self.cfg.tuning)
+
+        # Weight-only QAT: after the tuning load, before channels-last and the EMA copy, which both inherit it
+        self.fake_quant = cfg.fake_quant
+        if self.fake_quant:
+            fake_quant = _fake_quant()
+            # VGGBlock's 3x3 and 1x1 branches are summed by convert_to_deploy: 0.9% of DEIM-N, left float
+            from ..deim.hybrid_encoder import VGGBlock
+            n = fake_quant.attach(self.model, fake_quant.parse(self.fake_quant),
+                                  kinds=(nn.Conv2d, nn.Linear, nn.MultiheadAttention), exclude=(VGGBlock,))
+            print(f'fake-quant {self.fake_quant}: {n:,} weights train on the per-channel grid')
 
         if cfg.tf32:
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -150,10 +173,24 @@ class BaseSolver(object):
                 v = dist_utils.de_parallel(v)
                 state[k] = v.state_dict()
 
+        if getattr(self, 'fake_quant', None):
+            # Every reader of `model` / `ema.module` gets the grid weights under plain names; resume reads `qat`
+            fake_quant = _fake_quant()
+            bits = fake_quant.parse(self.fake_quant)
+            state['qat'] = {'spec': self.fake_quant, 'model': state['model']}
+            state['model'] = fake_quant.load_state(state['model'], bits)
+            if 'ema' in state:
+                state['qat']['ema'] = state['ema']['module']
+                state['ema'] = {**state['ema'], 'module': fake_quant.load_state(state['ema']['module'], bits)}
+
         return state
 
     def load_state_dict(self, state):
         """Load state dict, train/eval"""
+        if 'qat' in state:
+            state = {**state, 'model': state['qat']['model']}
+            if 'ema' in state:
+                state['ema'] = {**state['ema'], 'module': state['qat']['ema']}
         if 'last_epoch' in state:
             self.last_epoch = state['last_epoch']
             print('Load last_epoch')

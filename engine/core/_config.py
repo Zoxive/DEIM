@@ -84,6 +84,8 @@ class BaseConfig(object):
         # non-finite, instead of dying in the matcher. Off: the loop is exactly what it was.
         self.nonfinite_guard :bool = False
         self.nonfinite_max_skips :int = 10
+        # Weight-only QAT ('w4' | 'w6' | 'w8'): conv and linear weights train on a per-output-channel grid
+        self.fake_quant :str = None
         self.use_ema :bool = False
         self.ema_decay :float = 0.9999
         self.ema_warmups: int = 2000

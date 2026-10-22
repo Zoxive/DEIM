@@ -81,6 +81,8 @@ if __name__ == '__main__':
     parser.add_argument('--nonfinite-guard', action='store_true', default=None,
                         help='record, diagnose and skip a batch with non-finite predictions (engine/solver/nonfinite_guard.py)')
     parser.add_argument('--nonfinite-max-skips', type=int, help='raise after this many guarded batches (default 10)')
+    parser.add_argument('--fake-quant', choices=['w4', 'w6', 'w8'],
+                        help='weight-only QAT: conv and linear weights train on a per-output-channel grid of this many bits')
     parser.add_argument('--output-dir', type=str, help='output directoy')
     parser.add_argument('--summary-dir', type=str, help='tensorboard summry')
     parser.add_argument('--test-only', action='store_true', default=False,)
