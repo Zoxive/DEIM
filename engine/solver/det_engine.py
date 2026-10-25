@@ -205,6 +205,28 @@ def train_one_epoch(self_lr_scheduler, lr_scheduler, model: torch.nn.Module, cri
 
 
 @torch.no_grad()
+def _val_turns_landscape(data_loader):
+    """True when the validation pipeline turns tall photos (`TurnLandscape`), so its boxes come back turned."""
+    from ..data.transforms._transforms import TurnLandscape
+    return any(isinstance(op, TurnLandscape) for op in data_loader.dataset._transforms.transforms)
+
+
+def _unturned_results(postprocessor, outputs, orig_target_sizes):
+    """Postprocess a landscape-frame batch into the upright photo's pixels, which the COCO ground truth is in.
+
+    `TurnLandscape` turned every photo taller than wide a quarter counter-clockwise, so its boxes are scaled by the
+    turned size (h, w) and then sent back: turned (x', y') -> upright (w - y', x').
+    """
+    tall = orig_target_sizes[:, 1] > orig_target_sizes[:, 0]
+    sizes = torch.where(tall[:, None], orig_target_sizes.flip(1), orig_target_sizes)
+    results = postprocessor(outputs, sizes)
+    for result, turned, width in zip(results, tall.tolist(), orig_target_sizes[:, 0]):
+        if turned:
+            x0, y0, x1, y1 = result['boxes'].unbind(-1)
+            result['boxes'] = torch.stack([width - y1, x0, width - y0, x1], dim=-1)
+    return results
+
+
 def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, data_loader, coco_evaluator: CocoEvaluator, device):
     model.eval()
     criterion.eval()
@@ -219,6 +241,7 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
     # coco_evaluator = CocoEvaluator(base_ds, iou_types)
     # coco_evaluator.coco_eval[iou_types[0]].params.iouThrs = [0, 0.1, 0.5, 0.75]
 
+    turns = _val_turns_landscape(data_loader)
     for samples, targets in metric_logger.log_every(data_loader, 10, header):
         samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
@@ -227,7 +250,10 @@ def evaluate(model: torch.nn.Module, criterion: torch.nn.Module, postprocessor, 
 
         orig_target_sizes = torch.stack([t["orig_size"] for t in targets], dim=0)
 
-        results = postprocessor(outputs, orig_target_sizes)
+        if turns:
+            results = _unturned_results(postprocessor, outputs, orig_target_sizes)
+        else:
+            results = postprocessor(outputs, orig_target_sizes)
 
         # if 'segm' in postprocessor.keys():
         #     target_sizes = torch.stack([t["size"] for t in targets], dim=0)

@@ -10,8 +10,10 @@ def stats(
     cfg,
     input_shape: Tuple=(1, 3, 640, 640), ) -> Tuple[str, str, int]:
 
-    base_size = cfg.train_dataloader.collate_fn.base_size
-    input_shape = (1, 3, base_size, base_size)
+    # The deploy model's encoder position embedding and decoder anchors are built for eval_spatial_size, so the probe
+    # has to be that shape: a square probe crashes a landscape (H != W) frame before the first epoch.
+    height, width = cfg.yaml_cfg['eval_spatial_size']
+    input_shape = (1, 3, height, width)
 
     model_for_info = copy.deepcopy(cfg.model).deploy()
 

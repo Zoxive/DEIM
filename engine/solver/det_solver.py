@@ -22,6 +22,29 @@ import wandb
 
 class DetSolver(BaseSolver):
 
+    def _logged_best(self, best_stat, top1):
+        """Resuming a run in its own output dir: the re-evaluated checkpoint is not the run's best, so a later epoch
+        that only beats it would overwrite best_stg1.pth. Take the best stage-1 epoch back from log.txt instead,
+        as an uninterrupted run would have it. A branch into a fresh output dir has no log and keeps best_stat."""
+        log = self.output_dir / 'log.txt' if self.output_dir else None
+        if log is None or not log.exists():
+            return best_stat, top1
+        stop_epoch = self.train_dataloader.collate_fn.stop_epoch
+        logged = []
+        for line in log.read_text().splitlines():
+            row = json.loads(line)
+            if 'test_coco_eval_bbox' in row and row['epoch'] <= self.last_epoch:
+                logged.append((row['epoch'], row['test_coco_eval_bbox'][0]))
+        if not logged:
+            return best_stat, top1
+        top1 = max(top1, max(ap for _, ap in logged))
+        if self.last_epoch < stop_epoch:
+            epoch, ap = max((r for r in logged if r[0] < stop_epoch), key=lambda r: r[1])
+            if ap > best_stat.get('coco_eval_bbox', -1):
+                best_stat = {'epoch': epoch, 'coco_eval_bbox': ap}
+        print(f'best_stat from {log}: {best_stat}, top1 {top1}')
+        return best_stat, top1
+
     def _retune_distill_weight(self, epoch, grad_percentages):
         """RT-DETRv4's adaptive distillation weight (ported from its det_solver.py): after each epoch,
         move weight_dict['loss_distill'] so the encoder transformer's share of the gradient heads back into
@@ -98,6 +121,7 @@ class DetSolver(BaseSolver):
                 best_stat[k] = test_stats[k][0]
                 top1 = test_stats[k][0]
                 print(f'best_stat: {best_stat}')
+            best_stat, top1 = self._logged_best(best_stat, top1)
 
         best_stat_print = best_stat.copy()
         start_time = time.time()

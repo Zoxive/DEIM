@@ -190,3 +190,40 @@ class RandomRotate90(T.Transform):
 
     def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
         return self._transform(inpt, params)
+
+
+@register()
+class TurnLandscape(T.Transform):
+    """Turn a sample taller than wide a quarter counter-clockwise, boxes included, so a fixed landscape W x H input
+    sees every photo long side across. Square and landscape samples pass through.
+
+    Inference must apply the same turn before the W x H resize. Goes after RandomRotate90 and before Resize: a quarter
+    turn of a landscape sample comes back landscape here (net 0 or 180 degrees), and a portrait sample reaches the
+    frame turned either way.
+    """
+    _transformed_types = (
+        PIL.Image.Image,
+        Image,
+        Video,
+        Mask,
+        BoundingBoxes,
+    )
+
+    def _get_params(self, flat_inputs: List[Any]) -> Dict[str, Any]:
+        # The image's size, not torchvision's query_size over every input: F.rotate leaves an empty BoundingBoxes'
+        # canvas_size as it was (torchvision 0.23), so after RandomRotate90 turns a negative the two disagree and
+        # query_size raises. The stale canvas is harmless: Resize resets it.
+        image = next(i for i in flat_inputs if isinstance(i, (PIL.Image.Image, Image)))
+        height, width = F.get_size(image)
+        return {'turn': height > width}
+
+    def make_params(self, flat_inputs: List[Any]) -> Dict[str, Any]:
+        return self._get_params(flat_inputs)
+
+    def _transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        if not params['turn']:
+            return inpt
+        return F.rotate(inpt, 90, expand=True)
+
+    def transform(self, inpt: Any, params: Dict[str, Any]) -> Any:
+        return self._transform(inpt, params)

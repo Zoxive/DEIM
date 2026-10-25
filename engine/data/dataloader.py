@@ -109,6 +109,11 @@ class BaseCollateFunction(object):
 
 
 def generate_scales(base_size, base_size_repeat):
+    """The multi-scale sizes. An int is the square side (upstream); an [h, w] pair (a landscape frame) scales the long
+    side as upstream and gives each scale the frame's aspect, both sides multiples of 32, as (h, w)."""
+    if not isinstance(base_size, int):
+        height, width = base_size
+        return [(max(32, round(side * height / width / 32) * 32), side) for side in generate_scales(width, base_size_repeat)]
     scale_repeat = (base_size - int(base_size * 0.75 / 32) * 32) // 32
     scales = [int(base_size * 0.75 / 32) * 32 + i * 32 for i in range(scale_repeat)]
     scales += [base_size] * base_size_repeat

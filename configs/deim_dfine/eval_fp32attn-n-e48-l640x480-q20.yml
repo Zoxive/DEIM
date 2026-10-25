@@ -1,0 +1,12 @@
+# Eval only: the 640x480 landscape-frame N 48-epoch arm decoded at 20 queries.
+__include__: [
+  './bakeoff_d-nohand-rot90-nc-fp32attn-n-e48-l640x480.yml',
+]
+
+output_dir: ./outputs/eval_fp32attn-n-e48-l640x480-q20
+
+DFINETransformer:
+  num_queries: 20
+
+PostProcessor:
+  num_top_queries: 20

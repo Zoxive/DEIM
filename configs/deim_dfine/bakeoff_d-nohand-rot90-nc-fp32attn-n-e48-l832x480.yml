@@ -1,0 +1,37 @@
+# Bakeoff arm: the N 48-epoch arm on a 832x480 landscape frame, tall samples turned (TurnLandscape) before the resize.
+__include__: [
+  './bakeoff_d-nohand-rot90-nc-fp32attn-n-e48.yml',
+]
+
+output_dir: ./outputs/bakeoff_d-nohand-rot90-nc-fp32attn-n-e48-l832x480
+
+eval_spatial_size: [480, 832]
+
+train_dataloader:
+  dataset:
+    transforms:
+      ops:
+        - {type: Mosaic, output_size: 416, rotation_range: 10, translation_range: [0.1, 0.1], scaling_range: [0.5, 1.5],
+           probability: 1.0, fill_value: 0, use_cache: False, max_cached_images: 50, random_pop: True}
+        - {type: RandomPhotometricDistort, p: 0.5}
+        - {type: RandomZoomOut, fill: 0}
+        - {type: RandomIoUCrop, p: 0.8}
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: RandomHorizontalFlip}
+        - {type: RandomRotate90, p: 0.3, angles: [90, 270]}
+        - {type: TurnLandscape}
+        - {type: Resize, size: [480, 832], }
+        - {type: SanitizeBoundingBoxes, min_size: 1}
+        - {type: ConvertPILImage, dtype: 'uint8', scale: False}
+        - {type: ConvertBoxes, fmt: 'cxcywh', normalize: True}
+  collate_fn:
+    base_size: [480, 832]
+
+val_dataloader:
+  dataset:
+    ann_file: ../coco_bakeoff/valid-nohand-294/_annotations.coco.json
+    transforms:
+      ops:
+        - {type: TurnLandscape}
+        - {type: Resize, size: [480, 832], }
+        - {type: ConvertPILImage, dtype: 'float32', scale: True}
