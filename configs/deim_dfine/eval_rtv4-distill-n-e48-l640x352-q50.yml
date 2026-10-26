@@ -1,0 +1,12 @@
+# Eval only: the 640x352 N 48-epoch distillation arm decoded at 50 queries. The teacher and projector are training only.
+__include__: [
+  './bakeoff_rtv4-distill-n-e48-l640x352.yml',
+]
+
+output_dir: ./outputs/eval_rtv4-distill-n-e48-l640x352-q50
+
+DFINETransformer:
+  num_queries: 50
+
+PostProcessor:
+  num_top_queries: 50
