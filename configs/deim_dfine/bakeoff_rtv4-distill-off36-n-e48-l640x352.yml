@@ -1,0 +1,7 @@
+# Bakeoff arm: the 640x352 distillation arm with the teacher turned off for epochs 36-47 (resumed from its
+# epoch-35 checkpoint). The off40 arm's config with its own output directory; scoring uses the off40 eval configs.
+__include__: [
+  './bakeoff_rtv4-distill-off40-n-e48-l640x352.yml',
+]
+
+output_dir: ./outputs/bakeoff_rtv4-distill-off36-n-e48-l640x352
