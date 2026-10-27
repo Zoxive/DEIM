@@ -1,0 +1,12 @@
+# Eval only: the 640x352 distillation arm with the teacher off for epochs 40-47, decoded at 20 queries.
+__include__: [
+  './bakeoff_rtv4-distill-off40-n-e48-l640x352.yml',
+]
+
+output_dir: ./outputs/eval_rtv4-distill-off40-n-e48-l640x352-q20
+
+DFINETransformer:
+  num_queries: 20
+
+PostProcessor:
+  num_top_queries: 20

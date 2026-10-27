@@ -1,0 +1,10 @@
+# Bakeoff arm: the 640x352 distillation arm with the teacher turned off for epochs 40-47 (resumed from its epoch-39
+# checkpoint). The projector stays built so that checkpoint loads; with no teacher and no distill loss it is unused.
+__include__: [
+  './bakeoff_d-nohand-rot90-nc-fp32attn-n-e48-l640x352.yml',
+]
+
+output_dir: ./outputs/bakeoff_rtv4-distill-off40-n-e48-l640x352
+
+HybridEncoder:
+  distill_teacher_dim: 768
