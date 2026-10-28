@@ -92,7 +92,7 @@ class DEIMCriterion(nn.Module):
         assert 'pred_logits' in outputs
         src_logits = outputs['pred_logits']
         idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        target_classes_o = self._matched_targets(targets, indices, 'labels')
         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
                                     dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
@@ -107,14 +107,14 @@ class DEIMCriterion(nn.Module):
         idx = self._get_src_permutation_idx(indices)
         if values is None:
             src_boxes = outputs['pred_boxes'][idx]
-            target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            target_boxes = self._matched_targets(targets, indices, 'boxes')
             ious, _ = box_iou(box_cxcywh_to_xyxy(src_boxes), box_cxcywh_to_xyxy(target_boxes))
             ious = torch.diag(ious).detach()
         else:
             ious = values
 
         src_logits = outputs['pred_logits']
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        target_classes_o = self._matched_targets(targets, indices, 'labels')
         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
                                     dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
@@ -136,14 +136,14 @@ class DEIMCriterion(nn.Module):
         idx = self._get_src_permutation_idx(indices)
         if values is None:
             src_boxes = outputs['pred_boxes'][idx]
-            target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            target_boxes = self._matched_targets(targets, indices, 'boxes')
             ious, _ = box_iou(box_cxcywh_to_xyxy(src_boxes), box_cxcywh_to_xyxy(target_boxes))
             ious = torch.diag(ious).detach()
         else:
             ious = values
 
         src_logits = outputs['pred_logits']
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        target_classes_o = self._matched_targets(targets, indices, 'labels')
         target_classes = torch.full(src_logits.shape[:2], self.num_classes,
                                     dtype=torch.int64, device=src_logits.device)
         target_classes[idx] = target_classes_o
@@ -173,7 +173,7 @@ class DEIMCriterion(nn.Module):
         assert 'pred_boxes' in outputs
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs['pred_boxes'][idx]
-        target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_boxes = self._matched_targets(targets, indices, 'boxes')
         losses = {}
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction='none')
         losses['loss_bbox'] = loss_bbox.sum() / num_boxes
@@ -192,7 +192,7 @@ class DEIMCriterion(nn.Module):
         losses = {}
         if 'pred_corners' in outputs:
             idx = self._get_src_permutation_idx(indices)
-            target_boxes = torch.cat([t['boxes'][i] for t, (_, i) in zip(targets, indices)], dim=0)
+            target_boxes = self._matched_targets(targets, indices, 'boxes')
 
             pred_corners = outputs['pred_corners'][idx].reshape(-1, (self.reg_max+1))
             ref_points = outputs['ref_points'][idx].detach()
@@ -238,10 +238,31 @@ class DEIMCriterion(nn.Module):
         return losses
 
     def _get_src_permutation_idx(self, indices):
-        # permute predictions following indices
+        # permute predictions following indices. The matcher's indices live on the CPU, and every loss of a head
+        # indexes with them, so each set is built and moved to the outputs' device once per forward.
+        key = id(indices)
+        if key in self._index_cache and self._index_cache[key][0] is indices:
+            return self._index_cache[key][1]
         batch_idx = torch.cat([torch.full_like(src, i) for i, (src, _) in enumerate(indices)])
         src_idx = torch.cat([src for (src, _) in indices])
-        return batch_idx, src_idx
+        idx = (batch_idx.to(self._device), src_idx.to(self._device))
+        self._index_cache[key] = (indices, idx)
+        return idx
+
+    def _matched_targets(self, targets, indices, field):
+        """`torch.cat([t[field][j] for t, (_, j) in zip(targets, indices)])` as one gather, cached per forward:
+        the same values in the same order."""
+        key = (id(targets), id(indices), field)
+        if key in self._target_cache and self._target_cache[key][0] is indices and self._target_cache[key][1] is targets:
+            return self._target_cache[key][2]
+        values = torch.cat([t[field] for t in targets])
+        offsets = [0]
+        for t in targets[:-1]:
+            offsets.append(offsets[-1] + len(t[field]))
+        flat = torch.cat([j + offset for (_, j), offset in zip(indices, offsets)]).to(values.device)
+        matched = values.index_select(0, flat)
+        self._target_cache[key] = (indices, targets, matched)
+        return matched
 
     def _get_tgt_permutation_idx(self, indices):
         # permute targets following indices
@@ -261,8 +282,7 @@ class DEIMCriterion(nn.Module):
             count_sort_indices = torch.argsort(counts, descending=True)
             unique_sorted = unique[count_sort_indices]
             column_to_row = {}
-            for idx in unique_sorted:
-                row_idx, col_idx = idx[0].item(), idx[1].item()
+            for row_idx, col_idx in unique_sorted.tolist():
                 if row_idx not in column_to_row:
                     column_to_row[row_idx] = col_idx
             final_rows = torch.tensor(list(column_to_row.keys()), device=ind.device)
@@ -294,6 +314,8 @@ class DEIMCriterion(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
         outputs_without_aux = {k: v for k, v in outputs.items() if 'aux' not in k}
+        self._device = outputs['pred_logits'].device
+        self._index_cache, self._target_cache = {}, {}
 
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = self.matcher(outputs_without_aux, targets)['indices']
@@ -443,7 +465,7 @@ class DEIMCriterion(nn.Module):
             return {}
 
         src_boxes = outputs['pred_boxes'][self._get_src_permutation_idx(indices)]
-        target_boxes = torch.cat([t['boxes'][j] for t, (_, j) in zip(targets, indices)], dim=0)
+        target_boxes = self._matched_targets(targets, indices, 'boxes')
 
         if self.boxes_weight_format == 'iou':
             iou, _ = box_iou(box_cxcywh_to_xyxy(src_boxes.detach()), box_cxcywh_to_xyxy(target_boxes))

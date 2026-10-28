@@ -60,10 +60,15 @@ class ModelEMA(object):
             self.updates += 1
             d = self.decay_fn(self.updates)
             msd = dist_utils.de_parallel(model).state_dict()
+            # One multi-tensor op per term rather than two kernels per tensor; (1 - d) * source is rounded on its
+            # own before the add, as before.
+            averaged, source = [], []
             for k, v in self.module.state_dict().items():
                 if v.dtype.is_floating_point:
-                    v *= d
-                    v += (1 - d) * msd[k].detach()
+                    averaged.append(v)
+                    source.append(msd[k].detach())
+            torch._foreach_mul_(averaged, d)
+            torch._foreach_add_(averaged, torch._foreach_mul(source, 1 - d))
 
     def to(self, *args, **kwargs):
         self.module = self.module.to(*args, **kwargs)
