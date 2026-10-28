@@ -168,10 +168,11 @@ class DetSolver(BaseSolver):
 
             self.last_epoch += 1
 
-            if self.output_dir and epoch < self.train_dataloader.collate_fn.stop_epoch:
+            if self.output_dir:
+                # last.pth through the no-aug tail too, so a crash resume and any later scoring see the newest
+                # state; the periodic checkpoints stay stage 1 only, as before.
                 checkpoint_paths = [self.output_dir / 'last.pth']
-                # extra checkpoint before LR drop and every 100 epochs
-                if (epoch + 1) % args.checkpoint_freq == 0:
+                if epoch < self.train_dataloader.collate_fn.stop_epoch and (epoch + 1) % args.checkpoint_freq == 0:
                     checkpoint_paths.append(self.output_dir / f'checkpoint{epoch:04}.pth')
                 for checkpoint_path in checkpoint_paths:
                     dist_utils.save_on_master(self.state_dict(), checkpoint_path)

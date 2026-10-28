@@ -239,12 +239,10 @@ class BaseSolver(object):
         else:
             pretrain_state_dict = state['model']
 
-        # Adjust head parameters between datasets
-        try:
-            adjusted_state_dict = self._adjust_head_parameters(module.state_dict(), pretrain_state_dict)
-            stat, infos = self._matched_state(module.state_dict(), adjusted_state_dict)
-        except Exception:
-            stat, infos = self._matched_state(module.state_dict(), pretrain_state_dict)
+        # Adjust head parameters between datasets. Heads with no class mapping (COCO 80 -> our classes) keep the
+        # model's own initialisation and are listed as unmatched below.
+        adjusted_state_dict = self._adjust_head_parameters(module.state_dict(), pretrain_state_dict)
+        stat, infos = self._matched_state(module.state_dict(), adjusted_state_dict)
 
         module.load_state_dict(stat, strict=False)
         print(f'Load model.state_dict, {infos}')
@@ -291,7 +289,8 @@ class BaseSolver(object):
                     pretrain_state_dict[param_name] = adjusted_tensor
                     adjusted_params.append(param_name)
                 else:
-                    print(f"Cannot adjust parameter '{param_name}' due to size mismatch.")
+                    print(f"No class mapping for '{param_name}' ({tuple(pretrain_tensor.shape)} -> "
+                          f"{tuple(cur_tensor.shape)}): it keeps the model's initialisation.")
 
         return pretrain_state_dict
 
@@ -299,6 +298,10 @@ class BaseSolver(object):
         """Map class weights from pretrain model to current model based on class IDs."""
         if pretrain_tensor.size() == cur_tensor.size():
             return pretrain_tensor
+        # The id table maps Objects365 rows onto COCO's 80 (either way round); any other pair has no mapping.
+        rows = sorted((pretrain_tensor.shape[0], cur_tensor.shape[0]))
+        if rows[0] != len(self.obj365_ids) or rows[1] <= max(self.obj365_ids) + 1:
+            return None
 
         adjusted_tensor = cur_tensor.clone()
         adjusted_tensor.requires_grad = False
